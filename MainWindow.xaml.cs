@@ -17,18 +17,26 @@ public partial class MainWindow : Window
         InitializeComponent();
         _state = _store.Load();
         RefreshUi();
+
         if (_state.ProtectionEnabled)
         {
-            try { StartProtection(); }
-            catch { _state.ProtectionEnabled = false; _store.Save(_state); RefreshUi(); }
+            try
+            {
+                StartProtection();
+            }
+            catch
+            {
+                StopProtectionBestEffort();
+                _state.ProtectionEnabled = false;
+                _store.Save(_state);
+                RefreshUi();
+            }
         }
     }
 
     protected override void OnClosed(EventArgs e)
     {
-        try { _browserFirewall.Disable(); } catch { }
-        try { _browserPolicy.Disable(); } catch { }
-        try { _proxy.Stop(); } catch { }
+        StopProtectionBestEffort();
         _state.ProtectionEnabled = false;
         try { _store.Save(_state); } catch { }
         base.OnClosed(e);
@@ -37,7 +45,9 @@ public partial class MainWindow : Window
     private void RefreshUi()
     {
         DomainsList.ItemsSource = null;
-        DomainsList.ItemsSource = _state.AllowedDomains.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        DomainsList.ItemsSource = _state.AllowedDomains
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         StatusText.Text = _state.ProtectionEnabled
             ? "Protected — browser traffic is forced through the allow-list"
             : "Protection is off";
@@ -62,7 +72,10 @@ public partial class MainWindow : Window
         if (_state.ProtectionEnabled)
         {
             try { _proxy.UpdateAllowedDomains(_state.AllowedDomains); }
-            catch (Exception ex) { MessageBox.Show($"Could not update protection.\n\n{ex.Message}", "SiteShield", MessageBoxButton.OK, MessageBoxImage.Error); }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not update protection.\n\n{ex.Message}", "SiteShield", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
         RefreshUi();
     }
@@ -88,10 +101,12 @@ public partial class MainWindow : Window
         }
         catch (UnauthorizedAccessException)
         {
+            StopProtectionBestEffort();
             MessageBox.Show("Administrator permission is required to enforce Windows firewall and proxy settings.", "Administrator permission required", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         catch (Exception ex)
         {
+            StopProtectionBestEffort();
             MessageBox.Show($"Could not apply protection.\n\n{ex.Message}", "SiteShield", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -99,17 +114,38 @@ public partial class MainWindow : Window
     private void StartProtection()
     {
         _proxy.Start(_state.AllowedDomains);
-        _browserPolicy.Enable();
-        _browserFirewall.Enable();
+        try
+        {
+            _browserPolicy.Enable();
+            try
+            {
+                _browserFirewall.Enable();
+            }
+            catch
+            {
+                _browserPolicy.Disable();
+                throw;
+            }
+        }
+        catch
+        {
+            _proxy.Stop();
+            throw;
+        }
+    }
+
+    private void StopProtectionBestEffort()
+    {
+        try { _browserFirewall.Disable(); } catch { }
+        try { _browserPolicy.Disable(); } catch { }
+        try { _proxy.Stop(); } catch { }
     }
 
     private void DisableButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            _browserFirewall.Disable();
-            _browserPolicy.Disable();
-            _proxy.Stop();
+            StopProtectionBestEffort();
             _state.ProtectionEnabled = false;
             _store.Save(_state);
             RefreshUi();
