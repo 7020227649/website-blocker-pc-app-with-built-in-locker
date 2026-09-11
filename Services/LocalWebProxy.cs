@@ -203,7 +203,8 @@ public sealed class LocalWebProxy : IDisposable
         host = string.Empty;
         port = 443;
 
-        if (target.StartsWith("[", StringComparison.Ordinal) && target.IndexOf(']') is var close && close > 0)
+        var close = target.IndexOf(']');
+        if (target.StartsWith("[", StringComparison.Ordinal) && close > 0)
         {
             host = target[1..close];
             if (close + 1 < target.Length && target[close + 1] == ':')
@@ -241,14 +242,13 @@ public sealed class LocalWebProxy : IDisposable
             var read = await stream.ReadAsync(chunk, token);
             if (read == 0) break;
             buffer.Write(chunk, 0, read);
-            if (buffer.Length >= 4)
+
+            if (buffer.Length < 4) continue;
+            var data = buffer.ToArray();
+            for (var i = 3; i < data.Length; i++)
             {
-                var data = buffer.GetBuffer().AsSpan(0, (int)buffer.Length);
-                for (var i = 3; i < data.Length; i++)
-                {
-                    if (data[i - 3] == 13 && data[i - 2] == 10 && data[i - 1] == 13 && data[i] == 10)
-                        return buffer.ToArray();
-                }
+                if (data[i - 3] == 13 && data[i - 2] == 10 && data[i - 1] == 13 && data[i] == 10)
+                    return data;
             }
         }
         return buffer.ToArray();
