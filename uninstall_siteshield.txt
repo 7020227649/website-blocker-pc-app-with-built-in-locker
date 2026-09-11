@@ -1,0 +1,175 @@
+SITE SHIELD COMPLETE UNINSTALLER
+================================
+
+Run this file's PowerShell block from an ELEVATED PowerShell window (Run as Administrator).
+It removes SiteShield itself and its Windows enforcement: firewall rules, hosts-file blocks,
+Chrome/Edge/Brave/Firefox policy settings, the SiteShield local proxy settings, saved state,
+Desktop shortcut, installation directory, and temporary installer/source files.
+
+IMPORTANT:
+- Close Chrome, Edge, Brave, Firefox, Opera, and SiteShield before running.
+- The commands only target SiteShield-named firewall rules and SiteShield-managed hosts entries.
+- Browser policy values are restored from SiteShield's backup files when those backups exist.
+- If no backup exists, only the policy values created by SiteShield are removed.
+- Do NOT delete the whole Windows hosts file or all Windows Firewall rules.
+
+POWERSHELL (RUN AS ADMINISTRATOR)
+----------------------------------
+$ErrorActionPreference = 'SilentlyContinue'
+
+Write-Host '=== SiteShield COMPLETE UNINSTALL ===' -ForegroundColor Cyan
+
+# 1. Stop SiteShield and anything listening on its local proxy port.
+Get-Process -Name 'SiteShield' | Stop-Process -Force
+Get-NetTCPConnection -LocalPort 8888 -State Listen | ForEach-Object {
+    try { Stop-Process -Id $_.OwningProcess -Force } catch {}
+}
+
+# 2. Remove ALL Windows Firewall rules whose display/name starts with SiteShield Browser Block.
+Get-NetFirewallRule -DisplayName 'SiteShield Browser Block *' | Remove-NetFirewallRule -Confirm:$false
+Get-NetFirewallRule -Name 'SiteShield*' | Remove-NetFirewallRule -Confirm:$false
+
+# Fallback for the exact browser rule names used by SiteShield.
+$browserRuleNames = @(
+    'Chrome','Msedge','Opera','Launcher','Brave','Firefox','Vivaldi','Chromium',
+    'Arc','Librewolf','Waterfox','Floorp','Zen','Thorium','AvastSecureBrowser'
+)
+foreach ($name in $browserRuleNames) {
+    & netsh.exe advfirewall firewall delete rule name="SiteShield Browser Block $name" | Out-Null
+}
+
+# 3. Remove ONLY the SiteShield-managed section from the Windows hosts file.
+$hostsPath = Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
+if (Test-Path $hostsPath) {
+    $hosts = Get-Content -Path $hostsPath -Raw
+    $pattern = '(?ms)^# SITESHIELD START.*?# SITESHIELD END\r?\n?'
+    $clean = [regex]::Replace($hosts, $pattern, '')
+    if ($clean -ne $hosts) {
+        Set-Content -Path $hostsPath -Value $clean -NoNewline
+    }
+}
+
+# 4. Restore the Windows system proxy from SiteShield's backup, if present.
+$installDir = Join-Path $env:LOCALAPPDATA 'SiteShield'
+$proxyBackup = Join-Path $installDir 'system-proxy-backup.json'
+$internetSettings = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+
+if (Test-Path $proxyBackup) {
+    try {
+        $backup = Get-Content $proxyBackup -Raw | ConvertFrom-Json
+        $proxyEnable = 0
+        if ($null -ne $backup.ProxyEnable) { $proxyEnable = [int]$backup.ProxyEnable }
+        Set-ItemProperty -Path $internetSettings -Name ProxyEnable -Value $proxyEnable -Type DWord
+
+        if ($null -ne $backup.ProxyServer) {
+            Set-ItemProperty -Path $internetSettings -Name ProxyServer -Value ([string]$backup.ProxyServer) -Type String
+        } else {
+            Remove-ItemProperty -Path $internetSettings -Name ProxyServer
+        }
+
+        if ($null -ne $backup.ProxyOverride) {
+            Set-ItemProperty -Path $internetSettings -Name ProxyOverride -Value ([string]$backup.ProxyOverride) -Type String
+        } else {
+            Remove-ItemProperty -Path $internetSettings -Name ProxyOverride
+        }
+    } catch {}
+} else {
+    # No SiteShield backup: disable the SiteShield local proxy.
+    Set-ItemProperty -Path $internetSettings -Name ProxyEnable -Value 0 -Type DWord
+    Remove-ItemProperty -Path $internetSettings -Name ProxyServer
+    Remove-ItemProperty -Path $internetSettings -Name ProxyOverride
+}
+
+# Notify Windows/WinINet that proxy settings changed.
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class SiteShieldProxyRefresh {
+    [DllImport("wininet.dll", SetLastError=true)]
+    public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);
+}
+'@
+[SiteShieldProxyRefresh]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null
+[SiteShieldProxyRefresh]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null
+
+# 5. Restore browser policies from SiteShield's backup when available.
+$policyBackup = Join-Path $installDir 'browser-policy-backup.json'
+if (Test-Path $policyBackup) {
+    try {
+        $backup = Get-Content $policyBackup -Raw | ConvertFrom-Json
+        foreach ($keyProperty in $backup.PSObject.Properties) {
+            $keyPath = "HKLM:\$($keyProperty.Name)"
+            New-Item -Path $keyPath -Force | Out-Null
+            foreach ($valueProperty in $keyProperty.Value.PSObject.Properties) {
+                $entry = $valueProperty.Value
+                if ([int]$entry.Kind -eq 0) {
+                    Remove-ItemProperty -Path $keyPath -Name $valueProperty.Name
+                } elseif ([int]$entry.Kind -eq 4) {
+                    $number = 0
+                    [int]::TryParse([string]$entry.StringValue, [ref]$number) | Out-Null
+                    Set-ItemProperty -Path $keyPath -Name $valueProperty.Name -Value $number -Type DWord
+                } else {
+                    Set-ItemProperty -Path $keyPath -Name $valueProperty.Name -Value ([string]$entry.StringValue) -Type String
+                }
+            }
+        }
+    } catch {}
+} else {
+    # No backup exists: remove only the exact SiteShield policy values.
+    $policies = @{
+        'HKLM:\SOFTWARE\Policies\Google\Chrome' = @('ProxySettings','DnsOverHttpsMode','QuicAllowed')
+        'HKLM:\SOFTWARE\Policies\Microsoft\Edge' = @('ProxySettings','DnsOverHttpsMode','QuicAllowed')
+        'HKLM:\SOFTWARE\Policies\BraveSoftware\Brave' = @('ProxySettings','DnsOverHttpsMode','QuicAllowed')
+        'HKLM:\SOFTWARE\Policies\Mozilla\Firefox\Proxy' = @('Mode','Locked','HTTPProxy','HTTPProxyPort','UseHTTPProxyForAllProtocols','Passthrough','UseProxyForDNS')
+        'HKLM:\SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS' = @('Enabled','Locked','Fallback')
+    }
+    foreach ($keyPath in $policies.Keys) {
+        foreach ($valueName in $policies[$keyPath]) {
+            Remove-ItemProperty -Path $keyPath -Name $valueName
+        }
+    }
+}
+
+# 6. Remove now-empty SiteShield browser policy keys, without deleting unrelated policy values.
+$policyKeys = @(
+    'HKLM:\SOFTWARE\Policies\Google\Chrome',
+    'HKLM:\SOFTWARE\Policies\Microsoft\Edge',
+    'HKLM:\SOFTWARE\Policies\BraveSoftware\Brave',
+    'HKLM:\SOFTWARE\Policies\Mozilla\Firefox\Proxy',
+    'HKLM:\SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS'
+)
+foreach ($keyPath in $policyKeys) {
+    try {
+        $key = Get-Item $keyPath
+        if ($key.Property.Count -eq 0 -and $key.SubKeyCount -eq 0) {
+            Remove-Item $keyPath -Force
+        }
+    } catch {}
+}
+try {
+    $firefox = 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox'
+    $key = Get-Item $firefox
+    if ($key.Property.Count -eq 0 -and $key.SubKeyCount -eq 0) { Remove-Item $firefox -Force }
+} catch {}
+
+# 7. Flush DNS so old hosts-file results are discarded.
+& ipconfig.exe /flushdns | Out-Null
+
+# 8. Remove SiteShield Desktop shortcut.
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'SiteShield.lnk'
+Remove-Item $desktopShortcut -Force
+
+# 9. Remove SiteShield installation directory, including state and backup files.
+Remove-Item $installDir -Recurse -Force
+
+# 10. Remove the temporary installer source, installer log, and temporary install script.
+Remove-Item (Join-Path $env:TEMP 'SiteShield-source') -Recurse -Force
+Remove-Item (Join-Path $env:TEMP 'SiteShield-install.log') -Force
+Remove-Item (Join-Path $env:TEMP 'SiteShield-install.ps1') -Force
+
+Write-Host ''
+Write-Host 'SiteShield removal completed.' -ForegroundColor Green
+Write-Host 'Restart Windows (recommended), then verify your browsers can access sites normally.' -ForegroundColor Yellow
+Read-Host 'Press Enter to close'
+
+END OF UNINSTALLER
