@@ -1,26 +1,23 @@
-# SiteShield for Windows
+# SiteShield
 
-A Windows desktop allow-list website blocker for Chromium browsers including Chrome, Edge, and Opera.
+Windows website allow-list firewall for Chrome, Edge, Opera, and other applications using the Windows hosts layer.
 
-## Features
-- Blocks web access by default at the Windows hosts layer.
-- Maintains an allow list such as `google.com` and `canva.com`.
-- Add and remove domains from a desktop UI.
-- Applies changes with Administrator privileges.
-- Flushes the Windows DNS cache after changes.
-- Includes a GitHub Actions workflow that builds a self-contained Windows x64 executable package.
+## One-click CMD installation
 
-## Important limitation
-This version uses the Windows `hosts` file, so protection is system-wide instead of being tied to one browser. It is not a kernel-level firewall driver. Existing browser connections may need to be closed/reopened after a protection change.
+Open **Command Prompt as Administrator** and run:
 
-## Build locally
-Install the .NET 8 SDK on Windows and run:
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "iwr 'https://raw.githubusercontent.com/7020227649/website-blocker-pc-app-with-built-in-locker/main/install.ps1' -OutFile $env:TEMP\SiteShield-install.ps1; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\SiteShield-install.ps1"
+```
+
+The installer clones the repository, publishes the self-contained x64 app, creates a Desktop shortcut, and launches SiteShield.
+
+The app requires Administrator permission because Windows system network configuration is modified.
+
+## Manual build
+
+Requires Windows and .NET 8 SDK:
 
 ```powershell
 dotnet publish SiteShield.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
 ```
-
-The build output contains `SiteShield.exe`.
-
-## GitHub build
-The workflow at `.github/workflows/build-windows.yml` runs on pushes to `main` and manual dispatch. Download the `SiteShield-windows-x64` artifact from the Actions run.
