@@ -43,7 +43,7 @@ public sealed class BrowserFirewall
             .Distinct(StringComparer.OrdinalIgnoreCase);
 
         foreach (var name in names)
-            RunNetsh($"advfirewall firewall delete rule name=\"{name}\"");
+            RunNetsh($"advfirewall firewall delete rule name=\"{name}\"", allowMissingRule: true);
     }
 
     private static IEnumerable<string> DiscoverBrowsers()
@@ -98,7 +98,7 @@ public sealed class BrowserFirewall
     private static string GetRuleNameForFileName(string fileName) =>
         $"{Prefix} {Path.GetFileNameWithoutExtension(fileName)}";
 
-    private static void RunNetsh(string arguments)
+    private static void RunNetsh(string arguments, bool allowMissingRule = false)
     {
         using var process = Process.Start(new ProcessStartInfo
         {
@@ -115,6 +115,9 @@ public sealed class BrowserFirewall
         if (process is null)
             throw new InvalidOperationException("Could not start Windows Firewall configuration.");
 
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+
         if (!process.WaitForExit(10000))
         {
             try { process.Kill(true); } catch { }
@@ -122,6 +125,12 @@ public sealed class BrowserFirewall
         }
 
         if (process.ExitCode != 0)
+        {
+            var output = $"{stdout}\n{stderr}";
+            if (allowMissingRule && output.Contains("No rules match", StringComparison.OrdinalIgnoreCase))
+                return;
+
             throw new InvalidOperationException($"Windows Firewall operation failed: {arguments}");
+        }
     }
 }
