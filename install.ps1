@@ -47,16 +47,21 @@ try {
     Refresh-Path
   }
 
-  if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
-    Install-WingetPackage 'Git.Git' 'Git for Windows'
-  }
-
-  if (-not (Get-Command dotnet.exe -ErrorAction SilentlyContinue)) {
-    Install-WingetPackage 'Microsoft.DotNet.SDK.8' '.NET 8 SDK'
-  }
-
+  if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { Install-WingetPackage 'Git.Git' 'Git for Windows' }
+  if (-not (Get-Command dotnet.exe -ErrorAction SilentlyContinue)) { Install-WingetPackage 'Microsoft.DotNet.SDK.8' '.NET 8 SDK' }
   if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { throw 'Git installation did not complete successfully.' }
   if (-not (Get-Command dotnet.exe -ErrorAction SilentlyContinue)) { throw '.NET 8 SDK installation did not complete successfully.' }
+
+  Write-Host 'Stopping any previous SiteShield process...' -ForegroundColor Yellow
+  Get-Process -Name SiteShield -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+  $hostsPath = Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
+  if (Test-Path $hostsPath) {
+    Write-Host 'Removing legacy SiteShield hosts entries...' -ForegroundColor Yellow
+    $hostsText = Get-Content -Path $hostsPath -Raw
+    $cleanHosts = [regex]::Replace($hostsText, '(?ms)^# SITESHIELD START.*?# SITESHIELD END\r?\n?', '')
+    if ($cleanHosts -ne $hostsText) { Set-Content -Path $hostsPath -Value $cleanHosts -NoNewline }
+  }
 
   if (Test-Path $RepoDir) { Remove-Item $RepoDir -Recurse -Force }
   Write-Host 'Cloning SiteShield...' -ForegroundColor Yellow
