@@ -9,6 +9,7 @@ public partial class MainWindow : Window
     private readonly StateStore _store = new();
     private readonly LocalWebProxy _proxy = new();
     private readonly BrowserPolicy _browserPolicy = new();
+    private readonly BrowserFirewall _browserFirewall = new();
     private AppState _state = new();
 
     public MainWindow()
@@ -25,21 +26,11 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        if (_state.ProtectionEnabled)
-        {
-            try
-            {
-                _browserPolicy.Disable();
-                _proxy.Stop();
-                _state.ProtectionEnabled = false;
-                _store.Save(_state);
-            }
-            catch { }
-        }
-        else
-        {
-            _proxy.Stop();
-        }
+        try { _browserFirewall.Disable(); } catch { }
+        try { _browserPolicy.Disable(); } catch { }
+        try { _proxy.Stop(); } catch { }
+        _state.ProtectionEnabled = false;
+        try { _store.Save(_state); } catch { }
         base.OnClosed(e);
     }
 
@@ -48,7 +39,7 @@ public partial class MainWindow : Window
         DomainsList.ItemsSource = null;
         DomainsList.ItemsSource = _state.AllowedDomains.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
         StatusText.Text = _state.ProtectionEnabled
-            ? "Protected — Chrome, Edge and Opera are forced through the allow-list"
+            ? "Protected — browser traffic is forced through the allow-list"
             : "Protection is off";
         ApplyButton.IsEnabled = !_state.ProtectionEnabled;
         DisableButton.IsEnabled = _state.ProtectionEnabled;
@@ -93,11 +84,11 @@ public partial class MainWindow : Window
             _state.ProtectionEnabled = true;
             _store.Save(_state);
             RefreshUi();
-            MessageBox.Show("Protection is active. Close and reopen Chrome, Edge and Opera so every existing connection is forced through SiteShield.", "SiteShield", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("Protection is active. Close and reopen Chrome, Edge, Opera, Brave, or Firefox so existing connections are forced through SiteShield.", "SiteShield", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (UnauthorizedAccessException)
         {
-            MessageBox.Show("Administrator permission is required to enforce browser policies and Windows proxy settings.", "Administrator permission required", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show("Administrator permission is required to enforce Windows firewall and proxy settings.", "Administrator permission required", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         catch (Exception ex)
         {
@@ -109,12 +100,14 @@ public partial class MainWindow : Window
     {
         _proxy.Start(_state.AllowedDomains);
         _browserPolicy.Enable();
+        _browserFirewall.Enable();
     }
 
     private void DisableButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
+            _browserFirewall.Disable();
             _browserPolicy.Disable();
             _proxy.Stop();
             _state.ProtectionEnabled = false;
@@ -123,7 +116,7 @@ public partial class MainWindow : Window
         }
         catch (UnauthorizedAccessException)
         {
-            MessageBox.Show("Administrator permission is required to remove Windows browser policies.", "Administrator permission required", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show("Administrator permission is required to remove Windows firewall and browser policies.", "Administrator permission required", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         catch (Exception ex)
         {
