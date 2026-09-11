@@ -15,6 +15,8 @@ public sealed class BrowserPolicy
         LoadBackup();
         SetChromePolicies();
         SetEdgePolicies();
+        SetBravePolicies();
+        SetFirefoxPolicies();
         SaveBackup();
         SystemProxy.SetLocalProxy();
     }
@@ -23,12 +25,20 @@ public sealed class BrowserPolicy
     {
         RestoreKey(@"SOFTWARE\Policies\Google\Chrome");
         RestoreKey(@"SOFTWARE\Policies\Microsoft\Edge");
+        RestoreKey(@"SOFTWARE\Policies\BraveSoftware\Brave");
+        RestoreKey(@"SOFTWARE\Policies\Mozilla\Firefox\Proxy");
+        RestoreKey(@"SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS");
         SystemProxy.Restore();
     }
 
-    private void SetChromePolicies()
+    private void SetChromePolicies() => SetChromiumProxyPolicies(@"SOFTWARE\Policies\Google\Chrome");
+
+    private void SetEdgePolicies() => SetChromiumProxyPolicies(@"SOFTWARE\Policies\Microsoft\Edge");
+
+    private void SetBravePolicies() => SetChromiumProxyPolicies(@"SOFTWARE\Policies\BraveSoftware\Brave");
+
+    private void SetChromiumProxyPolicies(string path)
     {
-        const string path = @"SOFTWARE\Policies\Google\Chrome";
         Remember(path, "ProxySettings");
         Remember(path, "DnsOverHttpsMode");
         Remember(path, "QuicAllowed");
@@ -44,22 +54,36 @@ public sealed class BrowserPolicy
         key.SetValue("QuicAllowed", 0, RegistryValueKind.DWord);
     }
 
-    private void SetEdgePolicies()
+    private void SetFirefoxPolicies()
     {
-        const string path = @"SOFTWARE\Policies\Microsoft\Edge";
-        Remember(path, "ProxySettings");
-        Remember(path, "DnsOverHttpsMode");
-        Remember(path, "QuicAllowed");
-        using var key = Registry.LocalMachine.CreateSubKey(path, true)!;
-        var proxy = JsonSerializer.Serialize(new
+        const string proxyPath = @"SOFTWARE\Policies\Mozilla\Firefox\Proxy";
+        Remember(proxyPath, "Mode");
+        Remember(proxyPath, "Locked");
+        Remember(proxyPath, "HTTPProxy");
+        Remember(proxyPath, "HTTPProxyPort");
+        Remember(proxyPath, "UseHTTPProxyForAllProtocols");
+        Remember(proxyPath, "Passthrough");
+        Remember(proxyPath, "UseProxyForDNS");
+
+        using (var key = Registry.LocalMachine.CreateSubKey(proxyPath, true)!)
         {
-            ProxyMode = "fixed_servers",
-            ProxyServer = "http://127.0.0.1:8888",
-            ProxyBypassList = "<local>"
-        });
-        key.SetValue("ProxySettings", proxy, RegistryValueKind.String);
-        key.SetValue("DnsOverHttpsMode", "off", RegistryValueKind.String);
-        key.SetValue("QuicAllowed", 0, RegistryValueKind.DWord);
+            key.SetValue("Mode", "manual", RegistryValueKind.String);
+            key.SetValue("Locked", 1, RegistryValueKind.DWord);
+            key.SetValue("HTTPProxy", "127.0.0.1", RegistryValueKind.String);
+            key.SetValue("HTTPProxyPort", 8888, RegistryValueKind.DWord);
+            key.SetValue("UseHTTPProxyForAllProtocols", 1, RegistryValueKind.DWord);
+            key.SetValue("Passthrough", "<local>", RegistryValueKind.String);
+            key.SetValue("UseProxyForDNS", 0, RegistryValueKind.DWord);
+        }
+
+        const string dnsPath = @"SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS";
+        Remember(dnsPath, "Enabled");
+        Remember(dnsPath, "Locked");
+        Remember(dnsPath, "Fallback");
+        using var dnsKey = Registry.LocalMachine.CreateSubKey(dnsPath, true)!;
+        dnsKey.SetValue("Enabled", 0, RegistryValueKind.DWord);
+        dnsKey.SetValue("Locked", 1, RegistryValueKind.DWord);
+        dnsKey.SetValue("Fallback", 0, RegistryValueKind.DWord);
     }
 
     private void Remember(string keyPath, string valueName)
@@ -113,7 +137,7 @@ public sealed class BrowserPolicy
                 var values = new Dictionary<string, (RegistryValueKind, object?)>(StringComparer.OrdinalIgnoreCase);
                 foreach (var value in key.Value)
                 {
-                    object? restored = value.Value.Kind == RegistryValueKind.DWord ? value.Value.StringValue : value.Value.StringValue;
+                    object? restored = value.Value.StringValue;
                     values[value.Key] = (value.Value.Kind, restored);
                 }
                 _backup[key.Key] = values;
