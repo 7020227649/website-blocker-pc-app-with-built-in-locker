@@ -47,6 +47,45 @@ try {
     Refresh-Path
   }
 
+  function Restore-PreviousProxy {
+    $backupPath = Join-Path $InstallDir 'system-proxy-backup.json'
+    $keyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+    if (Test-Path $backupPath) {
+      Write-Host 'Restoring previous Windows proxy settings...' -ForegroundColor Yellow
+      $backup = Get-Content $backupPath -Raw | ConvertFrom-Json
+      Set-ItemProperty -Path $keyPath -Name ProxyEnable -Value ([int]$backup.ProxyEnable)
+      if ($null -ne $backup.ProxyServer) { Set-ItemProperty -Path $keyPath -Name ProxyServer -Value ([string]$backup.ProxyServer) } else { Remove-ItemProperty -Path $keyPath -Name ProxyServer -ErrorAction SilentlyContinue }
+      if ($null -ne $backup.ProxyOverride) { Set-ItemProperty -Path $keyPath -Name ProxyOverride -Value ([string]$backup.ProxyOverride) } else { Remove-ItemProperty -Path $keyPath -Name ProxyOverride -ErrorAction SilentlyContinue }
+      Remove-Item $backupPath -Force -ErrorAction SilentlyContinue
+    } else {
+      Set-ItemProperty -Path $keyPath -Name ProxyEnable -Value 0
+    }
+  }
+
+  function Restore-PreviousBrowserPolicies {
+    $backupPath = Join-Path $InstallDir 'browser-policy-backup.json'
+    if (-not (Test-Path $backupPath)) { return }
+    Write-Host 'Restoring previous browser policies...' -ForegroundColor Yellow
+    $backup = Get-Content $backupPath -Raw | ConvertFrom-Json
+    foreach ($keyProperty in $backup.PSObject.Properties) {
+      $keyPath = "HKLM:\$($keyProperty.Name)"
+      New-Item -Path $keyPath -Force | Out-Null
+      foreach ($valueProperty in $keyProperty.Value.PSObject.Properties) {
+        $entry = $valueProperty.Value
+        if ([int]$entry.Kind -eq 0) {
+          Remove-ItemProperty -Path $keyPath -Name $valueProperty.Name -ErrorAction SilentlyContinue
+        } elseif ([int]$entry.Kind -eq 4) {
+          $number = 0
+          [int]::TryParse([string]$entry.StringValue, [ref]$number) | Out-Null
+          Set-ItemProperty -Path $keyPath -Name $valueProperty.Name -Value $number -Type DWord
+        } else {
+          Set-ItemProperty -Path $keyPath -Name $valueProperty.Name -Value ([string]$entry.StringValue) -Type String
+        }
+      }
+    }
+    Remove-Item $backupPath -Force -ErrorAction SilentlyContinue
+  }
+
   if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { Install-WingetPackage 'Git.Git' 'Git for Windows' }
   if (-not (Get-Command dotnet.exe -ErrorAction SilentlyContinue)) { Install-WingetPackage 'Microsoft.DotNet.SDK.8' '.NET 8 SDK' }
   if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { throw 'Git installation did not complete successfully.' }
@@ -54,6 +93,8 @@ try {
 
   Write-Host 'Stopping any previous SiteShield process...' -ForegroundColor Yellow
   Get-Process -Name SiteShield -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Restore-PreviousProxy
+  Restore-PreviousBrowserPolicies
 
   $hostsPath = Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
   if (Test-Path $hostsPath) {
@@ -61,6 +102,11 @@ try {
     $hostsText = Get-Content -Path $hostsPath -Raw
     $cleanHosts = [regex]::Replace($hostsText, '(?ms)^# SITESHIELD START.*?# SITESHIELD END\r?\n?', '')
     if ($cleanHosts -ne $hostsText) { Set-Content -Path $hostsPath -Value $cleanHosts -NoNewline }
+  }
+
+  Write-Host 'Removing stale SiteShield browser firewall rules...' -ForegroundColor Yellow
+  foreach ($name in @('Chrome','Msedge','Opera','Launcher','Brave','Firefox')) {
+    & netsh.exe advfirewall firewall delete rule name="SiteShield Browser Block $name" | Out-Null
   }
 
   if (Test-Path $RepoDir) { Remove-Item $RepoDir -Recurse -Force }
