@@ -49,6 +49,8 @@ public sealed class BrowserFirewall
         yield return Path.Combine(root, "BraveSoftware", "Brave-Browser", "Application", "brave.exe");
         yield return Path.Combine(root, "Opera", "launcher.exe");
         yield return Path.Combine(root, "Opera", "opera.exe");
+        yield return Path.Combine(root, "Programs", "Opera", "launcher.exe");
+        yield return Path.Combine(root, "Programs", "Opera", "opera.exe");
         yield return Path.Combine(root, "Mozilla Firefox", "firefox.exe");
     }
 
