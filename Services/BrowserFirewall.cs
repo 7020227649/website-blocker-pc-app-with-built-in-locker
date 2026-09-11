@@ -1,4 +1,3 @@
-using Microsoft.Win32;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -27,20 +26,17 @@ public sealed class BrowserFirewall
         "avastsecurebrowser.exe"
     };
 
-    private static readonly string[] UninstallRoots =
-    {
-        @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-        @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
-    };
-
-    public void Enable()
+    public int Enable()
     {
         Disable();
+        var installed = 0;
         foreach (var exe in DiscoverBrowsers())
         {
             var ruleName = GetRuleName(exe);
             RunNetsh($"advfirewall firewall add rule name=\"{ruleName}\" dir=out action=block program=\"{exe}\" enable=yes profile=any");
+            installed++;
         }
+        return installed;
     }
 
     public void Disable()
@@ -66,83 +62,28 @@ public sealed class BrowserFirewall
         foreach (var root in roots.Where(Directory.Exists))
         {
             foreach (var path in GetKnownPaths(root))
-                TryAdd(candidates, path);
-        }
-
-        foreach (var installLocation in DiscoverInstallLocations())
-        {
-            foreach (var path in GetKnownPaths(installLocation))
-                TryAdd(candidates, path);
-
-            foreach (var exe in BrowserNames)
-                TryAdd(candidates, Path.Combine(installLocation, exe));
-        }
-
-        return candidates;
-    }
-
-    private static IEnumerable<string> DiscoverInstallLocations()
-    {
-        var locations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
-        {
-            foreach (var rootPath in UninstallRoots)
             {
                 try
                 {
-                    using var root = hive.OpenSubKey(rootPath, false);
-                    if (root is null) continue;
-
-                    foreach (var subKeyName in root.GetSubKeyNames())
-                    {
-                        try
-                        {
-                            using var app = root.OpenSubKey(subKeyName, false);
-                            var displayName = app?.GetValue("DisplayName") as string;
-                            var installLocation = app?.GetValue("InstallLocation") as string;
-                            if (string.IsNullOrWhiteSpace(displayName) || string.IsNullOrWhiteSpace(installLocation))
-                                continue;
-
-                            if (!LooksLikeBrowser(displayName)) continue;
-                            var fullPath = Path.GetFullPath(installLocation.Trim());
-                            if (Directory.Exists(fullPath)) locations.Add(fullPath);
-                        }
-                        catch { }
-                    }
+                    if (File.Exists(path)) candidates.Add(path);
                 }
                 catch { }
             }
         }
 
-        return locations;
-    }
-
-    private static bool LooksLikeBrowser(string displayName)
-    {
-        var value = displayName.ToLowerInvariant();
-        return value.Contains("chrome") ||
-               value.Contains("edge") ||
-               value.Contains("opera") ||
-               value.Contains("brave") ||
-               value.Contains("firefox") ||
-               value.Contains("vivaldi") ||
-               value.Contains("chromium") ||
-               value.Contains("arc") ||
-               value.Contains("librewolf") ||
-               value.Contains("waterfox") ||
-               value.Contains("floorp") ||
-               value.Contains("zen browser") ||
-               value.Contains("thorium") ||
-               value.Contains("avast secure browser");
-    }
-
-    private static void TryAdd(HashSet<string> candidates, string path)
-    {
-        try
+        foreach (var installPath in DiscoverInstallRegistryPaths())
         {
-            if (File.Exists(path)) candidates.Add(Path.GetFullPath(path));
+            foreach (var path in GetKnownPaths(installPath))
+            {
+                try
+                {
+                    if (File.Exists(path)) candidates.Add(path);
+                }
+                catch { }
+            }
         }
-        catch { }
+
+        return candidates;
     }
 
     private static IEnumerable<string> GetKnownPaths(string root)
@@ -164,6 +105,51 @@ public sealed class BrowserFirewall
         yield return Path.Combine(root, "Zen Browser", "zen.exe");
         yield return Path.Combine(root, "Thorium", "thorium.exe");
         yield return Path.Combine(root, "AVAST Software", "Browser", "Application", "AvastSecureBrowser.exe");
+    }
+
+    private static IEnumerable<string> DiscoverInstallRegistryPaths()
+    {
+        var registryRoots = new[]
+        {
+            Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")
+        };
+
+        foreach (var root in registryRoots)
+        {
+            if (root is null) continue;
+            using (root)
+            {
+                foreach (var name in root.GetSubKeyNames())
+                {
+                    using var key = root.OpenSubKey(name, false);
+                    var displayName = key?.GetValue("DisplayName") as string ?? string.Empty;
+                    if (!IsKnownBrowserProduct(displayName)) continue;
+                    var installLocation = key?.GetValue("InstallLocation") as string;
+                    if (!string.IsNullOrWhiteSpace(installLocation) && Directory.Exists(installLocation))
+                        yield return installLocation;
+                }
+            }
+        }
+    }
+
+    private static bool IsKnownBrowserProduct(string displayName)
+    {
+        return displayName.Contains("Google Chrome", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Microsoft Edge", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Brave", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Opera", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Mozilla Firefox", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Vivaldi", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Chromium", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Arc", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("LibreWolf", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Waterfox", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Floorp", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Zen Browser", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Thorium", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Avast Secure Browser", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GetRuleName(string executablePath) =>
