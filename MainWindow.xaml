@@ -43,8 +43,8 @@
         <Border Background="#111827" CornerRadius="14" Padding="18" Margin="0,14,0,0">
           <StackPanel>
             <TextBlock Text="Browser enforcement" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold"/>
-            <TextBlock Text="Chrome  •  Edge  •  Opera  •  Brave  •  Firefox" Foreground="#CBD5E1" Margin="0,8,0,0" TextWrapping="Wrap"/>
-            <TextBlock Text="Traffic is forced through SiteShield's local filtering proxy. Direct browser connections are blocked at the Windows Firewall layer." Foreground="#94A3B8" TextWrapping="Wrap" Margin="0,8,0,0"/>
+            <TextBlock Text="Chrome  •  Edge  •  Opera  •  Brave  •  Firefox  •  Vivaldi  •  Chromium  •  Arc" Foreground="#CBD5E1" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            <TextBlock Text="Also covers several Firefox and Chromium-family browsers when installed in their standard Windows locations. Browser traffic is forced through SiteShield's filtering proxy, while direct outbound browser connections are blocked by Windows Firewall." Foreground="#94A3B8" TextWrapping="Wrap" Margin="0,8,0,0"/>
           </StackPanel>
         </Border>
       </StackPanel>
