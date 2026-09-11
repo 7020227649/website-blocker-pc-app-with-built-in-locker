@@ -7,21 +7,43 @@ namespace SiteShield.Services;
 public sealed class BrowserFirewall
 {
     private const string Prefix = "SiteShield Browser Block";
-    private static readonly string[] BrowserNames = { "chrome.exe", "msedge.exe", "opera.exe", "launcher.exe", "brave.exe", "firefox.exe" };
+    private static readonly string[] BrowserNames =
+    {
+        "chrome.exe",
+        "msedge.exe",
+        "opera.exe",
+        "launcher.exe",
+        "brave.exe",
+        "firefox.exe",
+        "vivaldi.exe",
+        "chromium.exe",
+        "arc.exe",
+        "librewolf.exe",
+        "waterfox.exe",
+        "floorp.exe",
+        "zen.exe",
+        "thorium.exe",
+        "avastsecurebrowser.exe"
+    };
 
     public void Enable()
     {
         Disable();
         foreach (var exe in DiscoverBrowsers())
         {
-            RunNetsh($"advfirewall firewall add rule name=\"{Prefix} {Path.GetFileNameWithoutExtension(exe)}\" dir=out action=block program=\"{exe}\" enable=yes profile=any");
+            var ruleName = GetRuleName(exe);
+            RunNetsh($"advfirewall firewall add rule name=\"{ruleName}\" dir=out action=block program=\"{exe}\" enable=yes profile=any");
         }
     }
 
     public void Disable()
     {
-        foreach (var name in BrowserNames.Select(x => Path.GetFileNameWithoutExtension(x)))
-            RunNetsh($"advfirewall firewall delete rule name=\"{Prefix} {name}\"");
+        var names = BrowserNames
+            .Select(GetRuleNameForFileName)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in names)
+            RunNetsh($"advfirewall firewall delete rule name=\"{name}\"");
     }
 
     private static IEnumerable<string> DiscoverBrowsers()
@@ -37,7 +59,13 @@ public sealed class BrowserFirewall
         foreach (var root in roots.Where(Directory.Exists))
         {
             foreach (var path in GetKnownPaths(root))
-                if (File.Exists(path)) candidates.Add(path);
+            {
+                try
+                {
+                    if (File.Exists(path)) candidates.Add(path);
+                }
+                catch { }
+            }
         }
 
         return candidates;
@@ -53,7 +81,22 @@ public sealed class BrowserFirewall
         yield return Path.Combine(root, "Programs", "Opera", "launcher.exe");
         yield return Path.Combine(root, "Programs", "Opera", "opera.exe");
         yield return Path.Combine(root, "Mozilla Firefox", "firefox.exe");
+        yield return Path.Combine(root, "Vivaldi", "Application", "vivaldi.exe");
+        yield return Path.Combine(root, "Chromium", "Application", "chromium.exe");
+        yield return Path.Combine(root, "Arc", "Arc.exe");
+        yield return Path.Combine(root, "LibreWolf", "librewolf.exe");
+        yield return Path.Combine(root, "Waterfox", "waterfox.exe");
+        yield return Path.Combine(root, "Floorp", "floorp.exe");
+        yield return Path.Combine(root, "Zen Browser", "zen.exe");
+        yield return Path.Combine(root, "Thorium", "thorium.exe");
+        yield return Path.Combine(root, "AVAST Software", "Browser", "Application", "AvastSecureBrowser.exe");
     }
+
+    private static string GetRuleName(string executablePath) =>
+        $"{Prefix} {Path.GetFileNameWithoutExtension(executablePath)}";
+
+    private static string GetRuleNameForFileName(string fileName) =>
+        $"{Prefix} {Path.GetFileNameWithoutExtension(fileName)}";
 
     private static void RunNetsh(string arguments)
     {
@@ -68,8 +111,17 @@ public sealed class BrowserFirewall
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         });
-        process?.WaitForExit(10000);
-        if (process is not null && process.ExitCode != 0)
+
+        if (process is null)
+            throw new InvalidOperationException("Could not start Windows Firewall configuration.");
+
+        if (!process.WaitForExit(10000))
+        {
+            try { process.Kill(true); } catch { }
+            throw new InvalidOperationException("Windows Firewall configuration timed out.");
+        }
+
+        if (process.ExitCode != 0)
             throw new InvalidOperationException($"Windows Firewall operation failed: {arguments}");
     }
 }
