@@ -28,6 +28,9 @@ public sealed class BrowserPolicy
         RestoreKey(@"SOFTWARE\Policies\BraveSoftware\Brave");
         RestoreKey(@"SOFTWARE\Policies\Mozilla\Firefox\Proxy");
         RestoreKey(@"SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS");
+        TryDeleteEmptyKey(@"SOFTWARE\Policies\Mozilla\Firefox\Proxy");
+        TryDeleteEmptyKey(@"SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS");
+        TryDeleteEmptyKey(@"SOFTWARE\Policies\Mozilla\Firefox");
         SystemProxy.Restore();
     }
 
@@ -117,12 +120,36 @@ public sealed class BrowserPolicy
         foreach (var pair in values)
         {
             if (pair.Value.Kind == RegistryValueKind.None)
+            {
                 key.DeleteValue(pair.Key, false);
-            else if (pair.Value.Kind == RegistryValueKind.DWord && pair.Value.Value is string text && int.TryParse(text, out var number))
-                key.SetValue(pair.Key, number, RegistryValueKind.DWord);
-            else
-                key.SetValue(pair.Key, pair.Value.Value, pair.Value.Kind);
+                continue;
+            }
+
+            var value = pair.Value.Value;
+            if (pair.Value.Kind == RegistryValueKind.DWord)
+            {
+                if (value is string text && int.TryParse(text, out var number))
+                    key.SetValue(pair.Key, number, RegistryValueKind.DWord);
+                else if (value is not null)
+                    key.SetValue(pair.Key, Convert.ToInt32(value), RegistryValueKind.DWord);
+                continue;
+            }
+
+            if (value is not null)
+                key.SetValue(pair.Key, value, pair.Value.Kind);
         }
+    }
+
+    private static void TryDeleteEmptyKey(string keyPath)
+    {
+        try
+        {
+            using var baseKey = Registry.LocalMachine.OpenSubKey(keyPath, false);
+            if (baseKey is null) return;
+            if (baseKey.GetValueNames().Length != 0 || baseKey.GetSubKeyNames().Length != 0) return;
+            Registry.LocalMachine.DeleteSubKeyTree(keyPath, false);
+        }
+        catch { }
     }
 
     private void LoadBackup()
@@ -136,10 +163,7 @@ public sealed class BrowserPolicy
             {
                 var values = new Dictionary<string, (RegistryValueKind, object?)>(StringComparer.OrdinalIgnoreCase);
                 foreach (var value in key.Value)
-                {
-                    object? restored = value.Value.StringValue;
-                    values[value.Key] = (value.Value.Kind, restored);
-                }
+                    values[value.Key] = (value.Value.Kind, value.Value.StringValue);
                 _backup[key.Key] = values;
             }
         }
@@ -207,7 +231,7 @@ public static class SystemProxy
                 var backup = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(BackupPath));
                 if (backup is not null)
                 {
-                    key.SetValue("ProxyEnable", backup.TryGetValue("ProxyEnable", out var enabled) ? enabled.GetInt32() : 0, RegistryValueKind.DWord);
+                    key.SetValue("ProxyEnable", backup.TryGetValue("ProxyEnable", out var enabled) && enabled.TryGetInt32(out var number) ? number : 0, RegistryValueKind.DWord);
                     RestoreString(key, backup, "ProxyServer");
                     RestoreString(key, backup, "ProxyOverride");
                 }
@@ -226,7 +250,7 @@ public static class SystemProxy
 
     private static void RestoreString(RegistryKey key, Dictionary<string, JsonElement> backup, string name)
     {
-        if (backup.TryGetValue(name, out var value) && value.ValueKind != JsonValueKind.Null)
+        if (backup.TryGetValue(name, out var value) && value.ValueKind == JsonValueKind.String)
             key.SetValue(name, value.GetString() ?? string.Empty, RegistryValueKind.String);
         else
             key.DeleteValue(name, false);
