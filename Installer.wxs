@@ -1,0 +1,11 @@
+<!-- WiX source retained as an optional MSI path; the default release uses the self-contained EXE publish artifact. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="SiteShield" Language="1033" Version="1.0.0" Manufacturer="SiteShield" UpgradeCode="8D82EC7D-4AE8-4E82-913A-72B3A2CFB8A3">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <MediaTemplate />
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder"><Directory Id="INSTALLFOLDER" Name="SiteShield"/></Directory>
+    </Directory>
+    <Feature Id="ProductFeature" Title="SiteShield" Level="1"><ComponentGroupRef Id="ProductComponents"/></Feature>
+  </Product>
+</Wix>
