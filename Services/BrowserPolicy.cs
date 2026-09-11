@@ -28,10 +28,15 @@ public sealed class BrowserPolicy
         RestoreKey(@"SOFTWARE\Policies\BraveSoftware\Brave");
         RestoreKey(@"SOFTWARE\Policies\Mozilla\Firefox\Proxy");
         RestoreKey(@"SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS");
+        TryDeleteEmptyKey(@"SOFTWARE\Policies\Google\Chrome");
+        TryDeleteEmptyKey(@"SOFTWARE\Policies\Microsoft\Edge");
+        TryDeleteEmptyKey(@"SOFTWARE\Policies\BraveSoftware\Brave");
         TryDeleteEmptyKey(@"SOFTWARE\Policies\Mozilla\Firefox\Proxy");
         TryDeleteEmptyKey(@"SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS");
         TryDeleteEmptyKey(@"SOFTWARE\Policies\Mozilla\Firefox");
         SystemProxy.Restore();
+        _backup.Clear();
+        try { File.Delete(BackupPath); } catch { }
     }
 
     private void SetChromePolicies() => SetChromiumProxyPolicies(@"SOFTWARE\Policies\Google\Chrome");
@@ -104,18 +109,21 @@ public sealed class BrowserPolicy
             values[valueName] = (RegistryValueKind.None, null);
             return;
         }
+
         var value = key.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
         if (value is null)
         {
             values[valueName] = (RegistryValueKind.None, null);
             return;
         }
+
         values[valueName] = (key.GetValueKind(valueName), value);
     }
 
     private void RestoreKey(string keyPath)
     {
         if (!_backup.TryGetValue(keyPath, out var values)) return;
+
         using var key = Registry.LocalMachine.CreateSubKey(keyPath, true)!;
         foreach (var pair in values)
         {
@@ -159,6 +167,8 @@ public sealed class BrowserPolicy
             if (!File.Exists(BackupPath)) return;
             var dto = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, BackupValue>>>(File.ReadAllText(BackupPath));
             if (dto is null) return;
+
+            _backup.Clear();
             foreach (var key in dto)
             {
                 var values = new Dictionary<string, (RegistryValueKind, object?)>(StringComparer.OrdinalIgnoreCase);
@@ -213,6 +223,7 @@ public static class SystemProxy
                 Directory.CreateDirectory(Path.GetDirectoryName(BackupPath)!);
                 File.WriteAllText(BackupPath, JsonSerializer.Serialize(backup));
             }
+
             key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
             key.SetValue("ProxyServer", "127.0.0.1:8888", RegistryValueKind.String);
             key.SetValue("ProxyOverride", "<local>", RegistryValueKind.String);
