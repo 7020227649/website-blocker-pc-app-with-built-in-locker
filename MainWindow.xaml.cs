@@ -93,11 +93,20 @@ public partial class MainWindow : Window
     {
         try
         {
-            StartProtection();
+            var installedBrowserRules = StartProtection();
             _state.ProtectionEnabled = true;
             _store.Save(_state);
             RefreshUi();
-            MessageBox.Show("Protection is active. Close and reopen Chrome, Edge, Opera, Brave, or Firefox so existing connections are forced through SiteShield.", "SiteShield", MessageBoxButton.OK, MessageBoxImage.Information);
+
+            var browserMessage = installedBrowserRules > 0
+                ? $"{installedBrowserRules} browser firewall rule(s) installed."
+                : "No supported browser installation was detected. Browser traffic cannot be enforced until a supported browser is installed.";
+
+            MessageBox.Show(
+                $"Protection is active. {browserMessage}\n\nClose and reopen your browser so existing connections are forced through SiteShield.",
+                "SiteShield",
+                MessageBoxButton.OK,
+                installedBrowserRules > 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }
         catch (UnauthorizedAccessException)
         {
@@ -111,15 +120,18 @@ public partial class MainWindow : Window
         }
     }
 
-    private void StartProtection()
+    private int StartProtection()
     {
         _proxy.Start(_state.AllowedDomains);
         try
         {
+            if (!_proxy.IsRunning)
+                throw new InvalidOperationException("SiteShield local proxy failed to start.");
+
             _browserPolicy.Enable();
             try
             {
-                _browserFirewall.Enable();
+                return _browserFirewall.Enable();
             }
             catch
             {
