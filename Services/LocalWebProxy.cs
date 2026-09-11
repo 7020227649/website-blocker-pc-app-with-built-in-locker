@@ -8,6 +8,9 @@ namespace SiteShield.Services;
 public sealed class LocalWebProxy : IDisposable
 {
     public const int Port = 8888;
+    private const int MaxHeaderBytes = 64 * 1024;
+    private const int MaxBodyBytes = 8 * 1024 * 1024;
+
     private readonly object _gate = new();
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
@@ -63,8 +66,8 @@ public sealed class LocalWebProxy : IDisposable
     private async Task HandleClientAsync(TcpClient client, CancellationToken token)
     {
         using (client)
+        using (var stream = client.GetStream())
         {
-            using var stream = client.GetStream();
             stream.ReadTimeout = 10000;
             stream.WriteTimeout = 10000;
 
@@ -78,22 +81,15 @@ public sealed class LocalWebProxy : IDisposable
                 if (lines.Length == 0) return;
 
                 var requestLine = lines[0];
-                var parts = requestLine.Split(' ', 3);
+                var parts = requestLine.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2) return;
 
                 if (parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase))
                 {
                     var target = parts[1];
-                    var host = target;
-                    var port = 443;
-                    var colon = target.LastIndexOf(':');
-                    if (colon > 0 && int.TryParse(target[(colon + 1)..], out var parsedPort))
-                    {
-                        host = target[..colon];
-                        port = parsedPort;
-                    }
-
-                    if (port != 443 || !IsAllowed(host))
+                    if (!TryParseConnectTarget(target, out var host, out var port) ||
+                        port != 443 ||
+                        !IsAllowed(host))
                     {
                         await WriteResponseAsync(stream, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", token);
                         return;
@@ -103,25 +99,20 @@ public sealed class LocalWebProxy : IDisposable
                     return;
                 }
 
-                if (parts[0].Equals("GET", StringComparison.OrdinalIgnoreCase) ||
-                    parts[0].Equals("POST", StringComparison.OrdinalIgnoreCase) ||
-                    parts[0].Equals("HEAD", StringComparison.OrdinalIgnoreCase) ||
-                    parts[0].Equals("PUT", StringComparison.OrdinalIgnoreCase) ||
-                    parts[0].Equals("DELETE", StringComparison.OrdinalIgnoreCase) ||
-                    parts[0].Equals("PATCH", StringComparison.OrdinalIgnoreCase) ||
-                    parts[0].Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!Uri.TryCreate(parts[1], UriKind.Absolute, out var uri) ||
-                        !string.Equals(uri.Scheme, "http", StringComparison.OrdinalIgnoreCase) ||
-                        !IsAllowed(uri.Host))
-                    {
-                        await WriteResponseAsync(stream, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", token);
-                        return;
-                    }
+                if (!IsSupportedHttpMethod(parts[0])) return;
 
-                    await ForwardHttpAsync(stream, uri, text, token);
+                if (!Uri.TryCreate(parts[1], UriKind.Absolute, out var uri) ||
+                    !string.Equals(uri.Scheme, "http", StringComparison.OrdinalIgnoreCase) ||
+                    !IsAllowed(uri.Host))
+                {
+                    await WriteResponseAsync(stream, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", token);
+                    return;
                 }
+
+                await ForwardHttpAsync(stream, uri, lines, token);
             }
+            catch (OperationCanceledException) { }
+            catch (SocketException) { }
             catch { }
         }
     }
@@ -133,39 +124,119 @@ public sealed class LocalWebProxy : IDisposable
         using var upstreamStream = upstream.GetStream();
 
         await WriteResponseAsync(clientStream, "HTTP/1.1 200 Connection Established\r\nProxy-Agent: SiteShield\r\n\r\n", token);
-        var a = clientStream.CopyToAsync(upstreamStream, token);
-        var b = upstreamStream.CopyToAsync(clientStream, token);
-        await Task.WhenAny(a, b);
+        var clientToServer = clientStream.CopyToAsync(upstreamStream, token);
+        var serverToClient = upstreamStream.CopyToAsync(clientStream, token);
+        await Task.WhenAny(clientToServer, serverToClient);
     }
 
-    private async Task ForwardHttpAsync(NetworkStream clientStream, Uri uri, string originalHeader, CancellationToken token)
+    private async Task ForwardHttpAsync(NetworkStream clientStream, Uri uri, string[] lines, CancellationToken token)
     {
+        var contentLength = GetContentLength(lines);
+        if (contentLength < 0 || contentLength > MaxBodyBytes)
+        {
+            await WriteResponseAsync(clientStream, "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", token);
+            return;
+        }
+
         using var upstream = new TcpClient();
-        await upstream.ConnectAsync(uri.Host, 80, token);
+        await upstream.ConnectAsync(uri.Host, uri.Port > 0 ? uri.Port : 80, token);
         using var upstreamStream = upstream.GetStream();
 
-        var lines = originalHeader.Split("\r\n", StringSplitOptions.None);
         var output = new StringBuilder();
-        var first = lines[0].Split(' ', 3);
+        var first = lines[0].Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+        if (first.Length < 2) return;
+
         first[1] = string.IsNullOrEmpty(uri.PathAndQuery) ? "/" : uri.PathAndQuery;
-        output.Append(first[0]).Append(' ').Append(first[1]).Append(' ').Append(first.Length > 2 ? first[2] : "HTTP/1.1").Append("\r\n");
+        output.Append(first[0])
+            .Append(' ')
+            .Append(first[1])
+            .Append(' ')
+            .Append(first.Length > 2 ? first[2] : "HTTP/1.1")
+            .Append("\r\n");
+
         for (var i = 1; i < lines.Length; i++)
         {
             if (lines[i].Length == 0) break;
             if (lines[i].StartsWith("Proxy-Connection:", StringComparison.OrdinalIgnoreCase)) continue;
+            if (lines[i].StartsWith("Proxy-Authorization:", StringComparison.OrdinalIgnoreCase)) continue;
             output.Append(lines[i]).Append("\r\n");
         }
-        output.Append("\r\n");
-        var bytes = Encoding.ASCII.GetBytes(output.ToString());
-        await upstreamStream.WriteAsync(bytes, token);
+
+        output.Append("Connection: close\r\n\r\n");
+        await upstreamStream.WriteAsync(Encoding.ASCII.GetBytes(output.ToString()), token);
+
+        if (contentLength > 0)
+        {
+            var body = await ReadExactlyAsync(clientStream, contentLength, token);
+            await upstreamStream.WriteAsync(body, token);
+        }
+
         await upstreamStream.CopyToAsync(clientStream, token);
     }
+
+    private static int GetContentLength(string[] lines)
+    {
+        foreach (var line in lines)
+        {
+            if (!line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)) continue;
+            var value = line["Content-Length:".Length..].Trim();
+            return int.TryParse(value, out var length) && length >= 0 ? length : -1;
+        }
+        return 0;
+    }
+
+    private static async Task<byte[]> ReadExactlyAsync(NetworkStream stream, int length, CancellationToken token)
+    {
+        var buffer = new byte[length];
+        var offset = 0;
+        while (offset < length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(offset, length - offset), token);
+            if (read == 0) throw new EndOfStreamException();
+            offset += read;
+        }
+        return buffer;
+    }
+
+    private static bool TryParseConnectTarget(string target, out string host, out int port)
+    {
+        host = string.Empty;
+        port = 443;
+
+        if (target.StartsWith("[", StringComparison.Ordinal) && target.IndexOf(']') is var close && close > 0)
+        {
+            host = target[1..close];
+            if (close + 1 < target.Length && target[close + 1] == ':')
+                return int.TryParse(target[(close + 2)..], out port);
+            return true;
+        }
+
+        var colon = target.LastIndexOf(':');
+        if (colon > 0 && int.TryParse(target[(colon + 1)..], out var parsedPort))
+        {
+            host = target[..colon];
+            port = parsedPort;
+            return true;
+        }
+
+        host = target;
+        return host.Length > 0;
+    }
+
+    private static bool IsSupportedHttpMethod(string method) =>
+        method.Equals("GET", StringComparison.OrdinalIgnoreCase) ||
+        method.Equals("POST", StringComparison.OrdinalIgnoreCase) ||
+        method.Equals("HEAD", StringComparison.OrdinalIgnoreCase) ||
+        method.Equals("PUT", StringComparison.OrdinalIgnoreCase) ||
+        method.Equals("DELETE", StringComparison.OrdinalIgnoreCase) ||
+        method.Equals("PATCH", StringComparison.OrdinalIgnoreCase) ||
+        method.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<byte[]> ReadHeaderAsync(NetworkStream stream, CancellationToken token)
     {
         using var buffer = new MemoryStream();
         var chunk = new byte[2048];
-        while (buffer.Length < 64 * 1024)
+        while (buffer.Length < MaxHeaderBytes)
         {
             var read = await stream.ReadAsync(chunk, token);
             if (read == 0) break;
