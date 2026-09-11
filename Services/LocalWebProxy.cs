@@ -73,10 +73,10 @@ public sealed class LocalWebProxy : IDisposable
 
             try
             {
-                var header = await ReadHeaderAsync(stream, token);
-                if (header.Length == 0) return;
+                var request = await ReadHeaderAsync(stream, token);
+                if (request.Header.Length == 0) return;
 
-                var text = Encoding.ASCII.GetString(header);
+                var text = Encoding.ASCII.GetString(request.Header);
                 var lines = text.Split("\r\n", StringSplitOptions.None);
                 if (lines.Length == 0) return;
 
@@ -86,8 +86,7 @@ public sealed class LocalWebProxy : IDisposable
 
                 if (parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase))
                 {
-                    var target = parts[1];
-                    if (!TryParseConnectTarget(target, out var host, out var port) ||
+                    if (!TryParseConnectTarget(parts[1], out var host, out var port) ||
                         port != 443 ||
                         !IsAllowed(host))
                     {
@@ -95,7 +94,7 @@ public sealed class LocalWebProxy : IDisposable
                         return;
                     }
 
-                    await TunnelAsync(client, stream, host, port, token);
+                    await TunnelAsync(client, stream, host, port, request.ExtraBytes, token);
                     return;
                 }
 
@@ -109,7 +108,7 @@ public sealed class LocalWebProxy : IDisposable
                     return;
                 }
 
-                await ForwardHttpAsync(stream, uri, lines, token);
+                await ForwardHttpAsync(stream, uri, lines, request.ExtraBytes, token);
             }
             catch (OperationCanceledException) { }
             catch (SocketException) { }
@@ -117,19 +116,34 @@ public sealed class LocalWebProxy : IDisposable
         }
     }
 
-    private async Task TunnelAsync(TcpClient client, NetworkStream clientStream, string host, int port, CancellationToken token)
+    private async Task TunnelAsync(
+        TcpClient client,
+        NetworkStream clientStream,
+        string host,
+        int port,
+        byte[] initialBytes,
+        CancellationToken token)
     {
         using var upstream = new TcpClient();
         await upstream.ConnectAsync(host, port, token);
         using var upstreamStream = upstream.GetStream();
 
         await WriteResponseAsync(clientStream, "HTTP/1.1 200 Connection Established\r\nProxy-Agent: SiteShield\r\n\r\n", token);
+
+        if (initialBytes.Length > 0)
+            await upstreamStream.WriteAsync(initialBytes, token);
+
         var clientToServer = clientStream.CopyToAsync(upstreamStream, token);
         var serverToClient = upstreamStream.CopyToAsync(clientStream, token);
         await Task.WhenAny(clientToServer, serverToClient);
     }
 
-    private async Task ForwardHttpAsync(NetworkStream clientStream, Uri uri, string[] lines, CancellationToken token)
+    private async Task ForwardHttpAsync(
+        NetworkStream clientStream,
+        Uri uri,
+        string[] lines,
+        byte[] initialBodyBytes,
+        CancellationToken token)
     {
         var contentLength = GetContentLength(lines);
         if (contentLength < 0 || contentLength > MaxBodyBytes)
@@ -165,9 +179,14 @@ public sealed class LocalWebProxy : IDisposable
         output.Append("Connection: close\r\n\r\n");
         await upstreamStream.WriteAsync(Encoding.ASCII.GetBytes(output.ToString()), token);
 
-        if (contentLength > 0)
+        var alreadyRead = Math.Min(initialBodyBytes.Length, contentLength);
+        if (alreadyRead > 0)
+            await upstreamStream.WriteAsync(initialBodyBytes.AsMemory(0, alreadyRead), token);
+
+        var remaining = contentLength - alreadyRead;
+        if (remaining > 0)
         {
-            var body = await ReadExactlyAsync(clientStream, contentLength, token);
+            var body = await ReadExactlyAsync(clientStream, remaining, token);
             await upstreamStream.WriteAsync(body, token);
         }
 
@@ -233,7 +252,7 @@ public sealed class LocalWebProxy : IDisposable
         method.Equals("PATCH", StringComparison.OrdinalIgnoreCase) ||
         method.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase);
 
-    private static async Task<byte[]> ReadHeaderAsync(NetworkStream stream, CancellationToken token)
+    private static async Task<(byte[] Header, byte[] ExtraBytes)> ReadHeaderAsync(NetworkStream stream, CancellationToken token)
     {
         using var buffer = new MemoryStream();
         var chunk = new byte[2048];
@@ -243,15 +262,23 @@ public sealed class LocalWebProxy : IDisposable
             if (read == 0) break;
             buffer.Write(chunk, 0, read);
 
-            if (buffer.Length < 4) continue;
             var data = buffer.ToArray();
             for (var i = 3; i < data.Length; i++)
             {
-                if (data[i - 3] == 13 && data[i - 2] == 10 && data[i - 1] == 13 && data[i] == 10)
-                    return data;
+                if (data[i - 3] != 13 || data[i - 2] != 10 || data[i - 1] != 13 || data[i] != 10)
+                    continue;
+
+                var headerLength = i + 1;
+                var header = new byte[headerLength];
+                Buffer.BlockCopy(data, 0, header, 0, headerLength);
+                var extraLength = data.Length - headerLength;
+                var extra = new byte[extraLength];
+                if (extraLength > 0) Buffer.BlockCopy(data, headerLength, extra, 0, extraLength);
+                return (header, extra);
             }
         }
-        return buffer.ToArray();
+
+        return (buffer.ToArray(), Array.Empty<byte>());
     }
 
     private static Task WriteResponseAsync(NetworkStream stream, string response, CancellationToken token) =>
