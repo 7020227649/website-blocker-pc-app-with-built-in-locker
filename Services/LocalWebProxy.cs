@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -62,65 +63,67 @@ public sealed class LocalWebProxy : IDisposable
     private async Task HandleClientAsync(TcpClient client, CancellationToken token)
     {
         using (client)
-        using var stream = client.GetStream();
-        stream.ReadTimeout = 10000;
-        stream.WriteTimeout = 10000;
-
-        try
         {
-            var header = await ReadHeaderAsync(stream, token);
-            if (header.Length == 0) return;
+            using var stream = client.GetStream();
+            stream.ReadTimeout = 10000;
+            stream.WriteTimeout = 10000;
 
-            var text = Encoding.ASCII.GetString(header);
-            var lines = text.Split("\r\n", StringSplitOptions.None);
-            if (lines.Length == 0) return;
-
-            var requestLine = lines[0];
-            var parts = requestLine.Split(' ', 3);
-            if (parts.Length < 2) return;
-
-            if (parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                var target = parts[1];
-                var host = target;
-                var port = 443;
-                var colon = target.LastIndexOf(':');
-                if (colon > 0 && int.TryParse(target[(colon + 1)..], out var parsedPort))
-                {
-                    host = target[..colon];
-                    port = parsedPort;
-                }
+                var header = await ReadHeaderAsync(stream, token);
+                if (header.Length == 0) return;
 
-                if (port != 443 || !IsAllowed(host))
+                var text = Encoding.ASCII.GetString(header);
+                var lines = text.Split("\r\n", StringSplitOptions.None);
+                if (lines.Length == 0) return;
+
+                var requestLine = lines[0];
+                var parts = requestLine.Split(' ', 3);
+                if (parts.Length < 2) return;
+
+                if (parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase))
                 {
-                    await WriteResponseAsync(stream, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", token);
+                    var target = parts[1];
+                    var host = target;
+                    var port = 443;
+                    var colon = target.LastIndexOf(':');
+                    if (colon > 0 && int.TryParse(target[(colon + 1)..], out var parsedPort))
+                    {
+                        host = target[..colon];
+                        port = parsedPort;
+                    }
+
+                    if (port != 443 || !IsAllowed(host))
+                    {
+                        await WriteResponseAsync(stream, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", token);
+                        return;
+                    }
+
+                    await TunnelAsync(client, stream, host, port, token);
                     return;
                 }
 
-                await TunnelAsync(client, stream, host, port, token);
-                return;
-            }
-
-            if (parts[0].Equals("GET", StringComparison.OrdinalIgnoreCase) ||
-                parts[0].Equals("POST", StringComparison.OrdinalIgnoreCase) ||
-                parts[0].Equals("HEAD", StringComparison.OrdinalIgnoreCase) ||
-                parts[0].Equals("PUT", StringComparison.OrdinalIgnoreCase) ||
-                parts[0].Equals("DELETE", StringComparison.OrdinalIgnoreCase) ||
-                parts[0].Equals("PATCH", StringComparison.OrdinalIgnoreCase) ||
-                parts[0].Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!Uri.TryCreate(parts[1], UriKind.Absolute, out var uri) ||
-                    !string.Equals(uri.Scheme, "http", StringComparison.OrdinalIgnoreCase) ||
-                    !IsAllowed(uri.Host))
+                if (parts[0].Equals("GET", StringComparison.OrdinalIgnoreCase) ||
+                    parts[0].Equals("POST", StringComparison.OrdinalIgnoreCase) ||
+                    parts[0].Equals("HEAD", StringComparison.OrdinalIgnoreCase) ||
+                    parts[0].Equals("PUT", StringComparison.OrdinalIgnoreCase) ||
+                    parts[0].Equals("DELETE", StringComparison.OrdinalIgnoreCase) ||
+                    parts[0].Equals("PATCH", StringComparison.OrdinalIgnoreCase) ||
+                    parts[0].Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
                 {
-                    await WriteResponseAsync(stream, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", token);
-                    return;
-                }
+                    if (!Uri.TryCreate(parts[1], UriKind.Absolute, out var uri) ||
+                        !string.Equals(uri.Scheme, "http", StringComparison.OrdinalIgnoreCase) ||
+                        !IsAllowed(uri.Host))
+                    {
+                        await WriteResponseAsync(stream, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", token);
+                        return;
+                    }
 
-                await ForwardHttpAsync(stream, uri, text, token);
+                    await ForwardHttpAsync(stream, uri, text, token);
+                }
             }
+            catch { }
         }
-        catch { }
     }
 
     private async Task TunnelAsync(TcpClient client, NetworkStream clientStream, string host, int port, CancellationToken token)
