@@ -24,7 +24,7 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel>
               <TextBlock Text="Allowed websites" Foreground="#F8FAFC" FontSize="20" FontWeight="SemiBold"/>
-              <TextBlock Text="Everything else is blocked when protection is enabled." Foreground="#94A3B8" Margin="0,3,0,0"/>
+              <TextBlock Text="Only these domains and their subdomains can be reached while protection is enabled." Foreground="#94A3B8" Margin="0,3,0,0" TextWrapping="Wrap"/>
             </StackPanel>
             <Button Grid.Column="1" Content="Remove selected" Click="RemoveButton_Click" Padding="14,8" Background="#334155" Foreground="White" BorderThickness="0"/>
           </Grid>
@@ -42,13 +42,13 @@
         </Border>
         <Border Background="#111827" CornerRadius="14" Padding="18" Margin="0,14,0,0">
           <StackPanel>
-            <TextBlock Text="Browsers" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold"/>
+            <TextBlock Text="Browser enforcement" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold"/>
             <TextBlock Text="Chrome  •  Edge  •  Opera" Foreground="#CBD5E1" Margin="0,8,0,0"/>
-            <TextBlock Text="Uses the Windows hosts layer, so protection applies system-wide." Foreground="#94A3B8" TextWrapping="Wrap" Margin="0,8,0,0"/>
+            <TextBlock Text="SiteShield runs a local filtering proxy, forces the browsers through it, disables DNS-over-HTTPS and blocks QUIC bypasses." Foreground="#94A3B8" TextWrapping="Wrap" Margin="0,8,0,0"/>
           </StackPanel>
         </Border>
       </StackPanel>
     </Grid>
-    <TextBlock Grid.Row="3" Text="Administrator permissions are required to apply Windows-level protection." Foreground="#64748B" Margin="2,18,0,0"/>
+    <TextBlock Grid.Row="3" Text="Administrator permissions are required to apply Windows-level browser protection." Foreground="#64748B" Margin="2,18,0,0"/>
   </Grid>
 </Window>
