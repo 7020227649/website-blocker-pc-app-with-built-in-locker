@@ -105,7 +105,7 @@ try {
   }
 
   Write-Host 'Removing stale SiteShield browser firewall rules...' -ForegroundColor Yellow
-  foreach ($name in @('Chrome','Msedge','Opera','Launcher','Brave','Firefox')) {
+  foreach ($name in @('Chrome','Msedge','Opera','Launcher','Brave','Firefox','Vivaldi','Chromium','Arc','Librewolf','Waterfox','Floorp','Zen','Thorium','AvastSecureBrowser')) {
     & netsh.exe advfirewall firewall delete rule name="SiteShield Browser Block $name" | Out-Null
   }
 
