@@ -6,7 +6,7 @@ namespace SiteShield.Services;
 public sealed class BrowserFirewall
 {
     private const string Prefix = "SiteShield Browser Block";
-    private static readonly string[] BrowserNames = { "chrome.exe", "msedge.exe", "opera.exe", "brave.exe", "firefox.exe" };
+    private static readonly string[] BrowserNames = { "chrome.exe", "msedge.exe", "opera.exe", "launcher.exe", "brave.exe", "firefox.exe" };
 
     public void Enable()
     {
