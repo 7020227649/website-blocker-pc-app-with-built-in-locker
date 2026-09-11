@@ -8,7 +8,6 @@
     <AssemblyName>SiteShield</AssemblyName>
     <RootNamespace>SiteShield</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>assets\app.ico</ApplicationIcon>
     <Platforms>x64</Platforms>
   </PropertyGroup>
 </Project>
