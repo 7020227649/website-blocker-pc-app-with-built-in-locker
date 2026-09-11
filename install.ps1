@@ -4,24 +4,31 @@ $InstallDir = Join-Path $env:LOCALAPPDATA 'SiteShield'
 $RepoDir = Join-Path $env:TEMP 'SiteShield-source'
 $LogFile = Join-Path $env:TEMP 'SiteShield-install.log'
 
+$IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $IsAdmin) {
+  Write-Host '=== SiteShield one-click installer ===' -ForegroundColor Cyan
+  Write-Host 'Requesting Administrator permission...' -ForegroundColor Yellow
+  $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath)
+  try {
+    $child = Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList $argList -Wait -PassThru -WindowStyle Normal
+    Write-Host "Elevated installer exited with code $($child.ExitCode)."
+    if ($child.ExitCode -ne 0) {
+      Write-Host "Installation failed. Check $LogFile for details." -ForegroundColor Red
+      exit $child.ExitCode
+    }
+    Write-Host 'Installation completed.' -ForegroundColor Green
+    exit 0
+  }
+  catch {
+    Write-Host "Could not start the elevated installer: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+  }
+}
+
 Start-Transcript -Path $LogFile -Append | Out-Null
 try {
   Write-Host '=== SiteShield one-click installer ===' -ForegroundColor Cyan
-
-  $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-  if (-not $IsAdmin) {
-    Write-Host 'Requesting Administrator permission...' -ForegroundColor Yellow
-    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath)
-    try {
-      $child = Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -Wait -PassThru
-      Write-Host "Elevated installer exited with code $($child.ExitCode)."
-    }
-    catch {
-      Write-Host "Could not start the elevated installer: $($_.Exception.Message)" -ForegroundColor Red
-    }
-    exit
-  }
-
   Write-Host 'Administrator permission confirmed.' -ForegroundColor Green
 
   function Refresh-Path {
@@ -88,12 +95,11 @@ catch {
   Write-Host 'INSTALLATION FAILED' -ForegroundColor Red
   Write-Host $_.Exception.Message -ForegroundColor Red
   Write-Host "Full installer log: $LogFile" -ForegroundColor Yellow
+  exit 1
 }
 finally {
   Stop-Transcript | Out-Null
 }
 
-if ($IsAdmin) {
-  Write-Host ''
-  Read-Host 'Press Enter to close this installer window'
-}
+Write-Host ''
+Read-Host 'Press Enter to close this installer window'
